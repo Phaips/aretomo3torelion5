@@ -467,7 +467,7 @@ def print_banner():
     print(f"""
 ╔══════════════════════════════════════════════════╗
 ║                                                  ║
-║             AreTomo to RELION v5.0.0             ║
+║             AreTomo3 to RELION v5.0.0            ║
 ║                                                  ║
 ║     Convert AreTomo3 output to RELION5 format    ║
 ║                                                  ║
