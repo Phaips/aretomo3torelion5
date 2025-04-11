@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import json
-import csv
 import argparse
 import math
 import numpy as np
@@ -13,13 +12,12 @@ def parse_args():
     parser.add_argument('aretomo_dir', type=str, help='Directory containing AreTomo3 output')
     parser.add_argument('--output_dir', type=str, default='relion_star_files', help='Output directory for RELION5 star files')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
-    # The dose (in e-/Å²) per reference tilt step is now required.
     parser.add_argument('--dose', type=float, required=True, 
-                        help='Electron dose per tilt (in e-/Å²).')
+                        help='Electron dose per tilt in e-/Å². This value is used to calculate cumulative exposure.')
     return parser.parse_args()
 
 def read_session_json(aretomo_dir):
-    """Read AreTomo3 Session.json file."""
+    """Read AreTomo3 Session.json file"""
     json_file = os.path.join(aretomo_dir, 'AreTomo3_Session.json')
     if not os.path.exists(json_file):
         raise FileNotFoundError(f"Session JSON file not found: {json_file}")
@@ -35,36 +33,6 @@ def get_tomo_prefix(aretomo_dir):
         raise FileNotFoundError(f"No tomogram MRC files found in {aretomo_dir}")
     return os.path.splitext(mrc_files[0])[0]
 
-def read_order_list(aretomo_dir, tomo_prefix):
-    """
-    Read tilt order and tilt angles from the IMOD order list CSV file.
-    Expected file path: {aretomo_dir}/{tomo_prefix}_Imod/{tomo_prefix}_order_list.csv
-    Assumes the CSV has a header with a column that contains 'tilt' (case insensitive).
-    Returns a list of tilt angles (floats) in acquisition order.
-    """
-    order_list_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_order_list.csv")
-    if not os.path.exists(order_list_file):
-        raise FileNotFoundError(f"Order list CSV file not found: {order_list_file}")
-    tilt_angles = []
-    with open(order_list_file, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        # Try to find a field whose name includes "tilt" (case-insensitive)
-        key = None
-        for field in reader.fieldnames:
-            if "tilt" in field.lower():
-                key = field
-                break
-        if key is None:
-            # If no matching header, assume the first column is the tilt angle.
-            for row in reader:
-                angle = float(list(row.values())[0])
-                tilt_angles.append(angle)
-        else:
-            for row in reader:
-                angle = float(row[key])
-                tilt_angles.append(angle)
-    return tilt_angles
-
 def read_tlt_file(aretomo_dir, tomo_prefix):
     """Read tilt angles from the .tlt file."""
     tlt_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_st.tlt")
@@ -75,7 +43,9 @@ def read_tlt_file(aretomo_dir, tomo_prefix):
 
 def read_xf_file(aretomo_dir, tomo_prefix):
     """Read transformation matrices from the .xf file.
-    Returns a list of lists, each with 6 floats: [A11, A12, A21, A22, DX, DY].
+    
+    Returns:
+      A list of lists, each with 6 floats: [A11, A12, A21, A22, DX, DY].
     """
     xf_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_st.xf")
     if not os.path.exists(xf_file):
@@ -100,7 +70,7 @@ def read_ctf_file(aretomo_dir, tomo_prefix):
                 if len(parts) >= 8:
                     ctf_data.append({
                         'frame': int(parts[0]),
-                        'tilt_angle': None,
+                        'tilt_angle': None,  # We'll match with tilt angles later
                         'defocus_u': float(parts[1]),
                         'defocus_v': float(parts[2]),
                         'astigmatism_angle': float(parts[3])
@@ -129,7 +99,6 @@ def read_aln_file(aretomo_dir, tomo_prefix):
     aln_file = os.path.join(aretomo_dir, f"{tomo_prefix}.aln")
     if not os.path.exists(aln_file):
         raise FileNotFoundError(f"ALN file not found: {aln_file}")
-    
     aln_data = []
     with open(aln_file, 'r') as f:
         lines = f.readlines()
@@ -154,6 +123,7 @@ def read_aln_file(aretomo_dir, tomo_prefix):
 def read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix):
     """
     Read volume dimensions from the header of the .aln file.
+    Expects a line like "# RawSize = 4096 4096".
     Returns a tuple (vol_x, vol_y, None).
     """
     aln_file = os.path.join(aretomo_dir, f"{tomo_prefix}.aln")
@@ -213,8 +183,9 @@ def read_ctf_txt(aretomo_dir, tomo_prefix):
 
 def compute_tilt_alignment(xf_row, pixel_size):
     """
-    Compute RELION5 tilt parameters from the IMOD .xf transformation matrix.
-    Returns (x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst).
+    Compute RELION5 tilt parameters from IMOD .xf transformation matrix.
+    
+    Returns a tuple: (x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst)
     """
     A11, A12, A21, A22, DX, DY = xf_row
     tr_matrix = np.array([[A11, A12], [A21, A22]])
@@ -224,75 +195,49 @@ def compute_tilt_alignment(xf_row, pixel_size):
     y_shift = i_tr_matrix[1, 0] * DX + i_tr_matrix[1, 1] * DY
     x_shift_angst = x_shift * pixel_size
     y_shift_angst = y_shift * pixel_size
+    # These will be set later (x_tilt will be 0 and y_tilt is set to tilt_angle)
     x_tilt = 0.0
-    y_tilt = 0.0  # will be replaced with actual tilt angle later
+    y_tilt = 0.0
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
 
 def calculate_cumulative_exposure(tilt_angles, dose_per_tilt):
     """
-    Dynamically calculate cumulative exposure based on the acquired tilt angles.
-    The idea is to compute the median difference between successive tilts, then 
-    for each tilt, accumulate (|difference| / median_diff) * dose. The tilt closest 
-    to 0° is assigned a cumulative dose of 0.
-    This means that if a tilt is missing (i.e. a larger gap occurs), the dose increment 
-    will be proportionally larger.
+    Calculate cumulative exposure for each tilt based on acquisition order (using the tilt angle list).
+    The tilt whose absolute value is smallest is taken as zero-exposure.
+    
+    Returns a list of cumulative exposures.
     """
-    n = len(tilt_angles)
     if dose_per_tilt <= 0:
-        return [0.0] * n
-
-    # Calculate differences (in absolute value) between consecutive tilt angles.
-    diffs = [abs(tilt_angles[i] - tilt_angles[i-1]) for i in range(1, n)]
-    sorted_diffs = sorted(diffs)
-    m = len(sorted_diffs)
-    if m % 2 == 1:
-        ref_inc = sorted_diffs[m//2]
-    else:
-        ref_inc = 0.5 * (sorted_diffs[m//2 - 1] + sorted_diffs[m//2])
-    if ref_inc == 0:
-        ref_inc = 1.0  # safeguard
-
-    # Find the index of the tilt closest to 0°.
-    zero_idx = min(range(n), key=lambda i: abs(tilt_angles[i]))
-    exposures = [0.0] * n
-    exposures[zero_idx] = 0.0
-
+        return [0.0] * len(tilt_angles)
+    # Find the index of the tilt angle closest to 0
+    zero_tilt_idx = min(range(len(tilt_angles)), key=lambda i: abs(tilt_angles[i]))
+    exposures = [0.0] * len(tilt_angles)
     current_exp = 0.0
-    # Forward accumulation (from zero to the end)
-    for i in range(zero_idx + 1, n):
-        diff = tilt_angles[i] - tilt_angles[i - 1]  # should be positive if tilts sorted in increasing order
-        current_exp += (abs(diff) / ref_inc) * dose_per_tilt
+    for i in range(zero_tilt_idx, len(tilt_angles)):
         exposures[i] = current_exp
-
+        current_exp += dose_per_tilt
     current_exp = 0.0
-    # Backward accumulation (from zero to the beginning)
-    for i in range(zero_idx - 1, -1, -1):
-        diff = tilt_angles[i + 1] - tilt_angles[i]
-        current_exp += (abs(diff) / ref_inc) * dose_per_tilt
+    for i in range(zero_tilt_idx - 1, -1, -1):
+        current_exp += dose_per_tilt
         exposures[i] = current_exp
-
     return exposures
 
 def create_softlinks(aretomo_dir, output_dir, tomo_prefix):
-    """Create softlinks with .mrcs extension for .mrc files."""
+    """Create softlinks with .mrcs extension for .mrc files"""
     os.makedirs(output_dir, exist_ok=True)
     abs_aretomo_dir = os.path.abspath(aretomo_dir)
     abs_output_dir = os.path.abspath(output_dir)
-    
     mrc_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}.mrc")
     evn_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_EVN.mrc")
     odd_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_ODD.mrc")
     ctf_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_CTF.mrc")
     vol_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_Vol.mrc")
-    
     mrc_link = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
     evn_link = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
     odd_link = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
     ctf_link = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
-    
     links_created = []
-    for src, dst in [(mrc_file, mrc_link), (evn_file, evn_link),
-                     (odd_file, odd_link), (ctf_file, ctf_link)]:
+    for src, dst in [(mrc_file, mrc_link), (evn_file, evn_link), (odd_file, odd_link), (ctf_file, ctf_link)]:
         if os.path.exists(src):
             if os.path.exists(dst):
                 os.remove(dst)
@@ -312,21 +257,18 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
     pixel_size   = session_data['parameters']['PixSize']
     optics_group = "optics1"
     bin_factor   = session_data['parameters'].get('AtBin', [1])[0]
-    
     vol_size_x, vol_size_y, _ = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
     vol_size_z = read_volZ_from_json(session_data)
     ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
     hand = ctf_txt_data[0]['dfHand']
-    
     abs_output_dir = os.path.abspath(output_dir)
     tilt_series_star = os.path.join(abs_output_dir, f"{tomo_prefix}.star")
     etomo_directive  = os.path.join(abs_output_dir, f"{tomo_prefix}.edf")
     reconstructed_tomo = vol_file
-    
     tomogram_star_path = os.path.join(output_dir, 'tomograms.star')
     with open(tomogram_star_path, 'w') as f:
         f.write("# version 50001\n\n")
-        f.write("data_global\n")
+        f.write("data_global\n\n")
         f.write("loop_\n")
         f.write("_rlnTomoName #1\n")
         f.write("_rlnVoltage #2\n")
@@ -344,7 +286,6 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
         f.write("_rlnTomoSizeZ #14\n")
         f.write("_rlnTomoReconstructedTomogram #15\n")
         f.write(f"{tomo_prefix}   {voltage:.6f}   {cs:.6f}   {amp_contrast:.6f}   {pixel_size:.6f}   {hand:.6f}   {optics_group}   {pixel_size:.6f}   {tilt_series_star}   {etomo_directive}   {bin_factor:.6f}   {vol_size_x}   {vol_size_y}   {vol_size_z}   {reconstructed_tomo}\n")
-    
     print(f"Created tomogram star file: {tomogram_star_path}")
     return tomogram_star_path
 
@@ -355,25 +296,20 @@ def create_tilt_series_star(session_data, output_dir, tomo_prefix, aretomo_dir, 
     if "TiltAxis" not in session_data['parameters']:
         raise ValueError("TiltAxis parameter not found in session metadata.")
     tilt_axis = session_data['parameters']["TiltAxis"][0]
-    
     raw_dims = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
     image_dims = (raw_dims[0], raw_dims[1])
-    
     abs_output_dir = os.path.abspath(output_dir)
     even_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
     odd_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
     aligned_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
     ctf_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
-    
     if ctf_data and ctf_data[0]['tilt_angle'] is None:
         for entry in ctf_data:
             frame_idx = entry['frame'] - 1
             if 0 <= frame_idx < len(tilt_angles):
                 entry['tilt_angle'] = tilt_angles[frame_idx]
-    
-    # Dynamically calculate cumulative exposures based on tilt angles and dose.
+    # Calculate cumulative exposure per tilt (using the tilt angle list and the provided dose per tilt)
     exposures = calculate_cumulative_exposure(tilt_angles, dose_per_tilt)
-    
     tilt_series_star_path = os.path.join(output_dir, f"{tomo_prefix}.star")
     with open(tilt_series_star_path, 'w') as f:
         f.write("# Generated by AreTomo3 to RELION5 converter\n")
@@ -424,24 +360,21 @@ def create_tilt_series_star(session_data, output_dir, tomo_prefix, aretomo_dir, 
                     break
             astigmatism = abs(defocus_u - defocus_v)
             defocus_angle = astigmatism_angle
-            
             x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
+            # Here we set y_tilt equal to the nominal tilt angle.
             y_tilt = tilt_angle
-            
             even_entry    = f"{i+1:06d}@{even_mrcs_file}"
             odd_entry     = f"{i+1:06d}@{odd_mrcs_file}"
             aligned_entry = f"{i+1}@{aligned_mrcs_file}"
             ctf_entry_str = f"{i+1}@{ctf_mrcs_file}"
             ctf_scalefactor = math.cos(math.radians(tilt_angle))
             exposure = exposures[i]
-            
             f.write(
                 f"FileNotFound   1   {tilt_angle:.6f}   {tilt_axis:.6f}   {exposure:.6f}   0.000000   FileNotFound   "
                 f"{even_entry}   {odd_entry}   {aligned_entry}   FileNotFound   0   0   0   {ctf_entry_str}   "
                 f"{defocus_u:.6f}   {defocus_v:.6f}   {astigmatism:.6f}   {defocus_angle:.6f}   0   "
                 f"10.000000   0.010000   {x_tilt:.6f}   {y_tilt:.6f}   {z_rot:.6f}   {x_shift_angst:.6f}   {y_shift_angst:.6f}   {ctf_scalefactor:.6f}\n"
             )
-    
     print(f"Created tilt series star file: {tilt_series_star_path}")
     return tilt_series_star_path
 
@@ -461,6 +394,7 @@ def main():
     print_banner()
     args = parse_args()
     
+    # Check for required directory
     if not os.path.exists(args.aretomo_dir):
         print(f"Error: AreTomo3 directory not found: {args.aretomo_dir}", file=sys.stderr)
         sys.exit(1)
@@ -470,14 +404,8 @@ def main():
         tomo_prefix = get_tomo_prefix(args.aretomo_dir)
         print(f"Processing tomogram: {tomo_prefix}")
         
-        # Prefer tilt angles from the order list CSV if available.
-        order_list_path = os.path.join(args.aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_order_list.csv")
-        if os.path.exists(order_list_path):
-            tilt_angles = read_order_list(args.aretomo_dir, tomo_prefix)
-            print(f"Using tilt angles from order list ({len(tilt_angles)} entries).")
-        else:
-            tilt_angles = read_tlt_file(args.aretomo_dir, tomo_prefix)
-            print(f"Found {len(tilt_angles)} tilt angles from .tlt file")
+        tilt_angles = read_tlt_file(args.aretomo_dir, tomo_prefix)
+        print(f"Found {len(tilt_angles)} tilt angles")
         
         xf_data = read_xf_file(args.aretomo_dir, tomo_prefix)
         print(f"Found {len(xf_data)} transformation matrices")
@@ -485,7 +413,7 @@ def main():
         ctf_data = read_ctf_file(args.aretomo_dir, tomo_prefix)
         print(f"Found {len(ctf_data)} CTF entries")
         
-        metrics_data = read_metrics_csv(args.aretomo_dir)
+        metrics_data = read_metrics_csv(args.aretomo_dir)  # Optional.
         aln_data = read_aln_file(args.aretomo_dir, tomo_prefix)
         if aln_data:
             print(f"Found {len(aln_data)} ALN entries")
@@ -497,7 +425,7 @@ def main():
         start_time = datetime.now()
         create_tomogram_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir, vol_file)
         create_tilt_series_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir,
-                                tilt_angles, xf_data, ctf_data, aln_data, dose_per_tilt=args.dose)
+                                tilt_angles, xf_data, ctf_data, aln_data, args.dose)
         end_time = datetime.now()
         elapsed = (end_time - start_time).total_seconds()
         print(f"Successfully created RELION5 star files in {args.output_dir}")
