@@ -13,12 +13,13 @@ A Python utility for converting AreTomo3 alignment and reconstruction output to 
 ## Usage
 
 ```bash
-python aretomo2relion.py /path/to/aretomo/output/ --output_dir relion_star_files
+python aretomo2relion.py /path/to/aretomo_output/ --dose 2
 ```
 
 ### Arguments
 
-- `aretomo_dir`: Directory containing AreTomo3 output
+- `aretomo_dir`: Directory containing AreTomo3 outputs
+- `dose`: Electron dose per tilt in e-/Å². This value is used to calculate cumulative exposure
 - `--output_dir`: (Optional) Output directory name for RELION5 star files (default: 'relion_star_files')
 
 ## Requirements
