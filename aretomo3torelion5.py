@@ -448,7 +448,7 @@ def create_tilt_series_star(
         f.write("_rlnTomoZRot\n")
         f.write("_rlnTomoXShiftAngst\n")
         f.write("_rlnTomoYShiftAngst\n")
-        f.write("_rlnCtfScalefactor\n")
+        f.write("_rlnCtfScalefactor\n\n")
 
         # Loop through the tilt angles, in sorted order (the .tlt order)
         for i, tilt_angle in enumerate(tilt_angles):
