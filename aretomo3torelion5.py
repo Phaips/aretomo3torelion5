@@ -230,8 +230,46 @@ def compute_tilt_alignment(xf_row, pixel_size):
     
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
 
+def create_softlinks(aretomo_dir, output_dir, tomo_prefix):
+    """Create softlinks with .mrcs extension for .mrc files"""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    abs_aretomo_dir = os.path.abspath(aretomo_dir)
+    abs_output_dir = os.path.abspath(output_dir)
+    
+    # Source files (original .mrc files)
+    mrc_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}.mrc")
+    evn_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_EVN.mrc")
+    odd_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_ODD.mrc")
+    ctf_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_CTF.mrc")
+    vol_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_Vol.mrc")  # Keep this as .mrc as it's a 3D volume
+    
+    # Target softlink files (.mrcs extension)
+    mrc_link = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
+    evn_link = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
+    odd_link = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
+    ctf_link = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
+    
+    # Create the softlinks
+    links_created = []
+    
+    for src, dst in [(mrc_file, mrc_link), (evn_file, evn_link), 
+                     (odd_file, odd_link), (ctf_file, ctf_link)]:
+        if os.path.exists(src):
+            # Remove existing link if it exists
+            if os.path.exists(dst):
+                os.remove(dst)
+            # Create the softlink
+            os.symlink(src, dst)
+            links_created.append((src, dst))
+            print(f"Created softlink: {dst} -> {src}")
+        else:
+            print(f"Warning: Source file not found: {src}")
+    
+    return links_created, vol_file
 
-def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir):
+
+def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol_file):
     """Create the tomogram.star file for RELION5 using metadata from AreTomo3."""
     os.makedirs(output_dir, exist_ok=True)
 
@@ -253,11 +291,10 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir):
 
     # Create absolute paths for all file references
     abs_output_dir = os.path.abspath(output_dir)
-    abs_aretomo_dir = os.path.abspath(aretomo_dir)
     
     tilt_series_star = os.path.join(abs_output_dir, f"{tomo_prefix}.star")
     etomo_directive  = os.path.join(abs_output_dir, f"{tomo_prefix}.edf")  # Dummy file.
-    reconstructed_tomo = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_Vol.mrc")
+    reconstructed_tomo = vol_file  # This is already the absolute path
     
     tomogram_star_path = os.path.join(output_dir, 'tomograms.star')
     with open(tomogram_star_path, 'w') as f:
@@ -285,7 +322,7 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir):
     return tomogram_star_path
 
 def create_tilt_series_star(session_data, output_dir, tomo_prefix, aretomo_dir, tilt_angles, xf_data, ctf_data, aln_data):
-    """Create the tilt-series star file using AreTomo3 metadata."""
+    """Create the tilt-series star file using AreTomo3 metadata and .mrcs softlinks."""
     os.makedirs(output_dir, exist_ok=True)
     pixel_size = session_data['parameters']['PixSize']
 
@@ -298,13 +335,13 @@ def create_tilt_series_star(session_data, output_dir, tomo_prefix, aretomo_dir, 
     raw_dims = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
     image_dims = (raw_dims[0], raw_dims[1])
     
-    # Create absolute paths for all file references
-    abs_aretomo_dir = os.path.abspath(aretomo_dir)
+    # Create absolute paths for all file references, using .mrcs links in output_dir
+    abs_output_dir = os.path.abspath(output_dir)
     
-    even_mrc_file    = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_EVN.mrc")
-    odd_mrc_file     = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_ODD.mrc")
-    aligned_mrc_file = os.path.join(abs_aretomo_dir, f"{tomo_prefix}.mrc")
-    ctf_mrc_file     = os.path.join(abs_aretomo_dir, f"{tomo_prefix}_CTF.mrc")
+    even_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
+    odd_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
+    aligned_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
+    ctf_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
 
     # Map micrograph numbers to tilt angles if needed
     if ctf_data and ctf_data[0]['tilt_angle'] is None:
@@ -379,10 +416,10 @@ def create_tilt_series_star(session_data, output_dir, tomo_prefix, aretomo_dir, 
 
             y_tilt = tilt_angle
 
-            even_entry    = f"{i+1:06d}@{even_mrc_file}"
-            odd_entry     = f"{i+1:06d}@{odd_mrc_file}"
-            aligned_entry = f"{i+1}@{aligned_mrc_file}"
-            ctf_entry_str = f"{i+1}@{ctf_mrc_file}"
+            even_entry    = f"{i+1:06d}@{even_mrcs_file}"
+            odd_entry     = f"{i+1:06d}@{odd_mrcs_file}"
+            aligned_entry = f"{i+1}@{aligned_mrcs_file}"
+            ctf_entry_str = f"{i+1}@{ctf_mrcs_file}"
             
             # _rlnCtfScalefactor is computed as cosine of the tilt angle.
             ctf_scalefactor = math.cos(math.radians(tilt_angle))
@@ -469,10 +506,14 @@ def main():
         # Create output directory if it doesn't exist
         os.makedirs(args.output_dir, exist_ok=True)
         
+        # Create softlinks for MRC files with MRCS extension
+        print("Creating softlinks with .mrcs extension...")
+        links_created, vol_file = create_softlinks(args.aretomo_dir, args.output_dir, tomo_prefix)
+        
         # Generate STAR files
         start_time = datetime.now()
         
-        create_tomogram_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir)
+        create_tomogram_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir, vol_file)
         create_tilt_series_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir,
                                 tilt_angles, xf_data, ctf_data, aln_data)
         
@@ -480,14 +521,4 @@ def main():
         elapsed = (end_time - start_time).total_seconds()
         
         print(f"Successfully created RELION5 star files in {args.output_dir}")
-        print(f"Processing completed in {elapsed:.2f} seconds")
-        
-    except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+        print(f"Processing completed in {elapsed:.2f}")
