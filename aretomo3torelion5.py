@@ -523,4 +523,55 @@ def main():
 
     # Check for required files
     if not os.path.exists(args.aretomo_dir):
-        print(f"Error: AreTomo3 directory not found: {args.aretomo_dir
+        print(f"Error: AreTomo3 directory not found: {args.aretomo_dir}", file=sys.stderr)
+        sys.exit(1)
+    
+    try:
+        # Process the data
+        session_data = read_session_json(args.aretomo_dir)
+        tomo_prefix = get_tomo_prefix(args.aretomo_dir)
+        print(f"Processing tomogram: {tomo_prefix}")
+        
+        tilt_angles = read_tlt_file(args.aretomo_dir, tomo_prefix)
+        print(f"Found {len(tilt_angles)} tilt angles")
+        
+        xf_data = read_xf_file(args.aretomo_dir, tomo_prefix)
+        print(f"Found {len(xf_data)} transformation matrices")
+        
+        ctf_data = read_ctf_file(args.aretomo_dir, tomo_prefix)
+        print(f"Found {len(ctf_data)} CTF entries")
+        
+        metrics_data = read_metrics_csv(args.aretomo_dir)  # Optional.
+        aln_data = read_aln_file(args.aretomo_dir, tomo_prefix)
+        if aln_data:
+            print(f"Found {len(aln_data)} ALN entries")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(args.output_dir, exist_ok=True)
+        
+        # Create softlinks for MRC files with MRCS extension
+        print("Creating softlinks with .mrcs extension...")
+        links_created, vol_file = create_softlinks(args.aretomo_dir, args.output_dir, tomo_prefix)
+        
+        # Generate STAR files
+        start_time = datetime.now()
+        
+        create_tomogram_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir, vol_file)
+        create_tilt_series_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir,
+                                tilt_angles, xf_data, ctf_data, aln_data)
+        
+        end_time = datetime.now()
+        elapsed = (end_time - start_time).total_seconds()
+        
+        print(f"Successfully created RELION5 star files in {args.output_dir}")
+        print(f"Processing completed in {elapsed:.2f} seconds")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
