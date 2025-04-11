@@ -521,4 +521,7 @@ def main():
         elapsed = (end_time - start_time).total_seconds()
         
         print(f"Successfully created RELION5 star files in {args.output_dir}")
-        print(f"Processing completed in {elapsed:.2f}")
+        print(f"Processing completed in {elapsed:.2f} seconds")
+
+if __name__ == "__main__":
+    main()
