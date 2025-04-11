@@ -6,7 +6,7 @@ A Python utility for converting AreTomo3 alignment and reconstruction output to 
 ## Features
 
 - Extracts alignment parameters from AreTomo3 output
-- Generates `tomograms.star` and tilt-series STAR files for RELION5
+- Generates `tomograms.star` and `tilt-series.star` files for RELION5
 - Handles CTF estimation data
 - Preserves transformation matrices from the reconstruction
 
