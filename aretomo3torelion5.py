@@ -356,7 +356,7 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
         f.write("_rlnTomoSizeX #12\n")
         f.write("_rlnTomoSizeY #13\n")
         f.write("_rlnTomoSizeZ #14\n")
-        f.write("_rlnTomoReconstructedTomogram #15\n")
+        f.write("_rlnTomoReconstructedTomogram #15\n\n")
 
         f.write(
             f"{tomo_prefix} "
