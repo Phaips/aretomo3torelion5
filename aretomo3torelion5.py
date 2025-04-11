@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     # The dose (in e-/Å²) per reference tilt step is now required.
     parser.add_argument('--dose', type=float, required=True, 
-                        help='Electron dose (in e-/Å²) corresponding to a reference tilt increment (based on the median difference).')
+                        help='Electron dose per tilt (in e-/Å²).')
     return parser.parse_args()
 
 def read_session_json(aretomo_dir):
