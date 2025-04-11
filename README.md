@@ -1,4 +1,4 @@
-# AreTomo to RELION
+# AreTomo3 to RELION5
 
 A Python utility for converting AreTomo3 alignment and reconstruction output to RELION5 star files.
 
