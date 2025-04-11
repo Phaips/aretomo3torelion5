@@ -19,7 +19,7 @@ python aretomo2relion.py /path/to/aretomo/output/ --output_dir relion_star_files
 ### Arguments
 
 - `aretomo_dir`: Directory containing AreTomo3 output
-- `--output_dir`: (Optional) Output directory for RELION5 star files (default: 'relion_star_files')
+- `--output_dir`: (Optional) Output directory name for RELION5 star files (default: 'relion_star_files')
 
 ## Requirements
 
