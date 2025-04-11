@@ -2,9 +2,6 @@
 
 A Python utility for converting AreTomo3 alignment and reconstruction output to RELION5 star files.
 
-## Description
-
-This script converts metadata from AreTomo3 tomographic reconstruction software into the STAR file format used by RELION5 for subtomogram averaging.
 
 ## Features
 
