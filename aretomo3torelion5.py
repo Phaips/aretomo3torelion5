@@ -174,6 +174,9 @@ def read_ctf_txt(aretomo_dir, tomo_prefix):
 def compute_tilt_alignment(xf_row, pixel_size):
     """
     Compute RELION tilt parameters from an IMOD .xf transformation matrix.
+    following:
+    https://github.com/scipion-em/scipion-em-reliontomo/blob/8d538ca04f8d02d7a9978e594876bbf7617dcf5f/reliontomo/convert/convert50_tomo.py#L363
+    Shout-out to Scipion developers
 
     Returns (x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst).
     Typically, x_tilt=0, y_tilt=actual stage tilt, z_rot=rotation.
