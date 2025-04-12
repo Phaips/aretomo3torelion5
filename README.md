@@ -13,7 +13,7 @@ A Python utility for converting AreTomo3 alignment and reconstruction output to 
 ## Usage
 
 ```bash
-python aretomo2relion.py /path/to/aretomo_output/ --dose 2
+python aretomo3torelion5.py /path/to/aretomo_output/ --dose 2
 ```
 
 ### Arguments
