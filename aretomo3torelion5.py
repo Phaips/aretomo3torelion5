@@ -181,15 +181,22 @@ def compute_tilt_alignment(xf_row, pixel_size):
 
     """
     A11, A12, A21, A22, DX, DY = xf_row
-    tr_matrix = np.array([[A11, A12], [A21, A22]])
-    z_rot = math.degrees(math.atan2(A21, A11))
-    i_tr_matrix = np.linalg.inv(tr_matrix)
-    x_shift = i_tr_matrix[0, 0] * DX + i_tr_matrix[0, 1] * DY
-    y_shift = i_tr_matrix[1, 0] * DX + i_tr_matrix[1, 1] * DY
-    x_shift_angst = x_shift * pixel_size
-    y_shift_angst = y_shift * pixel_size
+    # Build the full 3x3 transformation matrix
+    T = np.array([[A11, A12, DX],
+                  [A21, A22, DY],
+                  [0.0, 0.0, 1.0]])
+    # Note: np.arctan2(A12, A11) gives the proper sign.
+    z_rot = np.degrees(np.arctan2(A12, A11))
+    
+    # Invert the full transformation matrix to get the corrected translation
+    T_inv = np.linalg.inv(T)
+    # The translation (shift) is given by the third column of the inverted matrix
+    x_shift_angst = T_inv[0, 2] * pixel_size
+    y_shift_angst = T_inv[1, 2] * pixel_size
+
     x_tilt = 0.0
-    y_tilt = 0.0 # we populate with tilt angles later
+    y_tilt = 0.0  # we populate this later
+    
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
 
 def read_acquisition_order_csv(aretomo_dir, tomo_prefix):
