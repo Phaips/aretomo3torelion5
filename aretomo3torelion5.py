@@ -514,11 +514,7 @@ def print_banner():
     """Print a banner with version information."""
     print(f"""
 ╔══════════════════════════════════════════════════╗
-║                                                  ║
-║             AreTomo3 to RELION v5.0.0            ║
-║                                                  ║
 ║     Convert AreTomo3 output to RELION5 format    ║
-║                                                  ║
 ╚══════════════════════════════════════════════════╝
 """)
 
