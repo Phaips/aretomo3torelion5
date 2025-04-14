@@ -184,8 +184,8 @@ def compute_tilt_alignment(xf_row, pixel_size):
     tr_matrix = np.array([[A11, A12], [A21, A22]])
     z_rot = math.degrees(math.atan2(A21, A11))
     i_tr_matrix = np.linalg.inv(tr_matrix)
-    x_shift = i_tr_matrix[0, 0] * -DX + i_tr_matrix[0, 1] * -DY
-    y_shift = i_tr_matrix[1, 0] * -DX + i_tr_matrix[1, 1] * -DY
+    x_shift = i_tr_matrix[0, 0] * DX + i_tr_matrix[0, 1] * DY
+    y_shift = i_tr_matrix[1, 0] * DX + i_tr_matrix[1, 1] * DY
     x_shift_angst = x_shift * pixel_size
     y_shift_angst = y_shift * pixel_size
     x_tilt = 0.0
