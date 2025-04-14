@@ -395,7 +395,7 @@ def create_tilt_series_star(
     aln_data = read_aln_file(aretomo_dir, tomo_prefix)
     # Assume that the first data row’s second column of the ALN file contains the tilt-axis rotation value.
     try:
-        tilt_axis = float(aln_data[0][1])
+        tilt_axis = -float(aln_data[0][1])
         print(f"Using tilt-axis angle from ALN file: {tilt_axis:.6f} degrees")
     except Exception as exc:
         raise ValueError("Could not read tilt-axis angle (ROT) from the ALN file.") from exc
