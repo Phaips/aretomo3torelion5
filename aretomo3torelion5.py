@@ -184,8 +184,8 @@ def compute_tilt_alignment(xf_row, pixel_size):
     i_tr_matrix = np.linalg.inv(tr_matrix)
     x_shift = i_tr_matrix[0, 0] * DX + i_tr_matrix[0, 1] * DY
     y_shift = i_tr_matrix[1, 0] * DX + i_tr_matrix[1, 1] * DY
-    x_shift_angst = x_shift * pixel_size
-    y_shift_angst = y_shift * pixel_size
+    x_shift_angst = -x_shift * pixel_size
+    y_shift_angst = -y_shift * pixel_size
     x_tilt = 0.0
     y_tilt = 0.0
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
@@ -386,9 +386,15 @@ def create_tilt_series_star(
     os.makedirs(output_dir, exist_ok=True)
     pixel_size = session_data['parameters']['PixSize']
 
-    if "TiltAxis" not in session_data['parameters']:
-        raise ValueError("TiltAxis parameter not found in session metadata.")
-    tilt_axis = session_data['parameters']["TiltAxis"][0]
+    # Instead of reading TiltAxis from the session JSON, read the tilt-axis angle (ROT) from the ALN file.
+    aln_data = read_aln_file(aretomo_dir, tomo_prefix)
+    # Assume that the first data row’s second column of the ALN file contains the tilt-axis rotation value.
+    try:
+        tilt_axis = float(aln_data[0][1])
+        print(f"Using tilt-axis angle from ALN file: {tilt_axis:.6f} degrees")
+    except Exception as exc:
+        raise ValueError("Could not read tilt-axis angle (ROT) from the ALN file.") from exc
+
 
     abs_output_dir = os.path.abspath(output_dir)
     even_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
