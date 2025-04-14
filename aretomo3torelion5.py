@@ -174,9 +174,6 @@ def read_ctf_txt(aretomo_dir, tomo_prefix):
 def compute_tilt_alignment(xf_row, pixel_size):
     """
     Compute RELION tilt parameters from an IMOD .xf transformation matrix.
-    following:
-    https://github.com/scipion-em/scipion-em-reliontomo/blob/8d538ca04f8d02d7a9978e594876bbf7617dcf5f/reliontomo/convert/convert50_tomo.py
-    Shout-out to Scipion developers
 
     Returns (x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst).
     Typically, x_tilt=0, y_tilt=actual stage tilt, z_rot=rotation.
@@ -185,10 +182,10 @@ def compute_tilt_alignment(xf_row, pixel_size):
     tr_matrix = np.array([[A11, A12], [A21, A22]])
     z_rot = math.degrees(math.atan2(A21, A11))
     i_tr_matrix = np.linalg.inv(tr_matrix)
-    x_shift = i_tr_matrix[0, 0] * DX + i_tr_matrix[0, 1] * DY
-    y_shift = i_tr_matrix[1, 0] * DX + i_tr_matrix[1, 1] * DY
-    x_shift_angst = -x_shift * pixel_size
-    y_shift_angst = -y_shift * pixel_size
+    x_shift = i_tr_matrix[0, 0] * -DX + i_tr_matrix[0, 1] * -DY
+    y_shift = i_tr_matrix[1, 0] * -DX + i_tr_matrix[1, 1] * -DY
+    x_shift_angst = x_shift * pixel_size
+    y_shift_angst = y_shift * pixel_size
     x_tilt = 0.0
     y_tilt = 0.0
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
@@ -335,12 +332,15 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
     ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
     hand = ctf_txt_data[0]['dfHand'] if ctf_txt_data else 0.0
 
-    abs_output_dir = os.path.abspath(output_dir)
-    tilt_series_star = os.path.join(abs_output_dir, f"{tomo_prefix}.star")
-    etomo_directive  = os.path.join(abs_output_dir, f"{tomo_prefix}.edf")
-    reconstructed_tomo = vol_file
-    tomogram_star_path = os.path.join(output_dir, 'tomograms.star')
+    # Instead of constructing absolute paths for the tilt-series star and etomo directive files,
+    # we simply use relative filenames (since these files will be created in the output_dir)
+    tilt_series_star_rel = f"{tomo_prefix}.star"
+    etomo_directive_rel  = f"{tomo_prefix}.edf"
 
+    # 'vol_file' is assumed already to be appropriately handled (or you might make it relative as well)
+    reconstructed_tomo = vol_file
+
+    tomogram_star_path = os.path.join(output_dir, 'tomograms.star')
     with open(tomogram_star_path, 'w') as f:
         f.write("# version 50001\n\n")
         f.write("data_global\n\n")
@@ -359,17 +359,17 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
         f.write("_rlnTomoSizeX #12\n")
         f.write("_rlnTomoSizeY #13\n")
         f.write("_rlnTomoSizeZ #14\n")
-        f.write("_rlnTomoReconstructedTomogram #15\n\n")
+        f.write("_rlnTomoReconstructedTomogram #15\n")
 
         f.write(
-            f"{tomo_prefix} "
-            f"{voltage:.6f} {cs:.6f} {amp_contrast:.6f} {pixel_size:.6f} {hand:.6f} {optics_group} "
-            f"{pixel_size:.6f} {tilt_series_star} {etomo_directive} {bin_factor:.6f} "
-            f"{vol_size_x} {vol_size_y} {vol_size_z} {reconstructed_tomo}\n"
+            f"{tomo_prefix}   {voltage:.6f}   {cs:.6f}   {amp_contrast:.6f}   {pixel_size:.6f}   "
+            f"{hand:.6f}   {optics_group}   {pixel_size:.6f}   {tilt_series_star_rel}   "
+            f"{etomo_directive_rel}   {bin_factor:.6f}   {vol_size_x}   {vol_size_y}   {vol_size_z}   "
+            f"{reconstructed_tomo}\n"
         )
-
     print(f"Created tomogram star file: {tomogram_star_path}")
     return tomogram_star_path
+
 
 def create_tilt_series_star(
     session_data,
@@ -512,7 +512,11 @@ def print_banner():
     """Print a banner with version information."""
     print(f"""
 ╔══════════════════════════════════════════════════╗
+║                                                  ║
+║             AreTomo3 to RELION v5.0.0            ║
+║                                                  ║
 ║     Convert AreTomo3 output to RELION5 format    ║
+║                                                  ║
 ╚══════════════════════════════════════════════════╝
 """)
 
