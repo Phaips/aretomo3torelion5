@@ -231,7 +231,7 @@ def compute_tilt_alignment(xf_row, pixel_size):
     x_shift_angst = T_inv[0, 2] * pixel_size
     y_shift_angst = T_inv[1, 2] * pixel_size
 
-    x_tilt = 0.0
+    x_tilt = 0.0  # by default
     y_tilt = 0.0  # we populate this later
     
     return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
