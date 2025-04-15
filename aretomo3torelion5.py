@@ -5,18 +5,68 @@ import argparse
 import math
 import numpy as np
 import sys
+import glob
+import re
 from datetime import datetime
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Convert AreTomo3 output to RELION5 star files')
     parser.add_argument('aretomo_dir', type=str, help='Directory containing AreTomo3 output')
     parser.add_argument('--output_dir', type=str, default='relion_star_files', help='Output directory for RELION5 star files')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     parser.add_argument('--dose', type=float, required=True,
                         help='Electron dose per tilt in e-/Å². This value is used to calculate cumulative exposure.')
+    parser.add_argument('--include', type=str, nargs='+', default=None, 
+                        help='Include only these tomogram prefixes (e.g., Position_1 Position_2)')
+    parser.add_argument('--exclude', type=str, nargs='+', default=None,
+                        help='Exclude these tomogram prefixes (e.g., Position_3 Position_4)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     return parser.parse_args()
 
-def read_session_json(aretomo_dir):
+def find_all_tomo_prefixes(aretomo_dir):
+    """
+    Find all tomogram prefixes in the directory by looking for .mrc files
+    that don't contain 'Vol', 'EVN', 'ODD', or 'CTF' in the filename.
+    """
+    mrc_files = [
+        f for f in os.listdir(aretomo_dir)
+        if f.endswith('.mrc') and not any(x in f for x in ['Vol', 'EVN', 'ODD', 'CTF'])
+    ]
+    
+    if not mrc_files:
+        raise FileNotFoundError(f"No suitable tomogram MRC files found in {aretomo_dir}")
+    
+    prefixes = [os.path.splitext(f)[0] for f in mrc_files]
+    return sorted(prefixes)
+
+def filter_prefixes(all_prefixes, include=None, exclude=None):
+    """
+    Filter tomogram prefixes based on include/exclude lists.
+    
+    Args:
+        all_prefixes: List of all detected tomogram prefixes
+        include: List of prefixes to include (if None, include all)
+        exclude: List of prefixes to exclude (if None, exclude none)
+    
+    Returns:
+        Filtered list of prefixes
+    """
+    result = list(all_prefixes)
+    
+    if include is not None:
+        result = [p for p in result if any(
+            re.match(f"^{pattern.replace('*', '.*')}$", p) 
+            for pattern in include
+        )]
+    
+    if exclude is not None:
+        result = [p for p in result if not any(
+            re.match(f"^{pattern.replace('*', '.*')}$", p) 
+            for pattern in exclude
+        )]
+        
+    return result
+
+def read_session_json(aretomo_dir, tomo_prefix):
     """Read AreTomo3_Session.json file."""
     json_file = os.path.join(aretomo_dir, 'AreTomo3_Session.json')
     if not os.path.exists(json_file):
@@ -24,19 +74,6 @@ def read_session_json(aretomo_dir):
     with open(json_file, 'r') as f:
         session_data = json.load(f)
     return session_data
-
-def get_tomo_prefix(aretomo_dir):
-    """
-    Extract tomogram prefix from directory contents by looking for a .mrc file
-    that doesn't contain 'Vol', 'EVN', 'ODD', or 'CTF' in the filename.
-    """
-    mrc_files = [
-        f for f in os.listdir(aretomo_dir)
-        if f.endswith('.mrc') and not any(x in f for x in ['Vol', 'EVN', 'ODD', 'CTF'])
-    ]
-    if not mrc_files:
-        raise FileNotFoundError(f"No suitable tomogram MRC files found in {aretomo_dir}")
-    return os.path.splitext(mrc_files[0])[0]
 
 def read_tlt_file(aretomo_dir, tomo_prefix):
     """Read tilt angles from the .tlt file."""
@@ -320,36 +357,159 @@ def create_softlinks(aretomo_dir, output_dir, tomo_prefix):
 
     return links_created, vol_file
 
-def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol_file):
+def create_dummy_edf_file(output_dir, tomo_prefix):
     """
-    Create the tomogram.star file for RELION5 using metadata from AreTomo3.
-    This file references the tilt series .star and other parameters needed by RELION.
+    Create a dummy ETOMO directive (.edf) file for the tomogram.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    edf_file_path = os.path.join(output_dir, f"{tomo_prefix}.edf")
+    
+    # Create an empty file or with minimal content
+    with open(edf_file_path, 'w') as f:
+        f.write("# Dummy ETOMO directive file for RELION5\n")
+        f.write(f"# Generated for tomogram: {tomo_prefix}\n")
+        f.write("# This is a placeholder file\n")
+    
+    print(f"Created dummy ETOMO directive file: {edf_file_path}")
+    return edf_file_path
 
-    voltage      = session_data['parameters']['kV']
-    cs           = session_data['parameters']['Cs']
-    amp_contrast = session_data['parameters']['AmpContrast']
-    pixel_size   = session_data['parameters']['PixSize']
-    optics_group = "optics1"
-    bin_factor   = session_data['parameters'].get('AtBin', [1])[0]
+def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
+    """Process a single tomogram and return its data"""
+    try:
+        session_data = read_session_json(aretomo_dir, tomo_prefix)
+        
+        tilt_angles = read_tlt_file(aretomo_dir, tomo_prefix)
+        print(f"Found {len(tilt_angles)} tilt angles")
 
-    vol_size_x, vol_size_y, _ = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
-    vol_size_z = read_volZ_from_json(session_data)
+        xf_data = read_xf_file(aretomo_dir, tomo_prefix)
+        print(f"Found {len(xf_data)} transformation matrices")
 
-    # Read CTF text for handedness if needed
-    ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
-    hand = ctf_txt_data[0]['dfHand'] if ctf_txt_data else 0.0
+        ctf_data = read_ctf_file(aretomo_dir, tomo_prefix)
+        print(f"Found {len(ctf_data)} CTF entries")
 
-    # Instead of constructing absolute paths for the tilt-series star and etomo directive files,
-    # we simply use relative filenames (since these files will be created in the output_dir)
-    tilt_series_star_rel = f"{tomo_prefix}.star"
-    etomo_directive_rel  = f"{tomo_prefix}.edf"
+        aln_data = read_aln_file(aretomo_dir, tomo_prefix)
+        if aln_data:
+            print(f"Found {len(aln_data)} ALN entries")
+            
+        # Read CTF text for handedness
+        ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
+        hand = ctf_txt_data[0]['dfHand'] if ctf_txt_data else 0.0
+            
+        # Read dimensions
+        vol_size_x, vol_size_y, _ = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
+        vol_size_z = read_volZ_from_json(session_data)
+        
+        # Get voltage, pixel size, etc.
+        voltage = session_data['parameters']['kV']
+        cs = session_data['parameters']['Cs']
+        amp_contrast = session_data['parameters']['AmpContrast']
+        pixel_size = session_data['parameters']['PixSize']
+        bin_factor = session_data['parameters'].get('AtBin', [1])[0]
+        
+        # Get tilt axis from ALN file
+        try:
+            tilt_axis = float(aln_data[0][1])
+        except Exception:
+            tilt_axis = 0.0  # Default if not found
+        
+        # Assume vol file path
+        vol_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Vol.mrc")
+        
+        # Handle tilt series data
+        # If the CTF entries do not have tilt_angle set, match them by frame index
+        if ctf_data and ctf_data[0].get('tilt_angle') is None:
+            for entry in ctf_data:
+                frame_idx = entry['frame'] - 1
+                if 0 <= frame_idx < len(tilt_angles):
+                    entry['tilt_angle'] = tilt_angles[frame_idx]
 
-    # 'vol_file' is assumed already to be appropriately handled (or you might make it relative as well)
-    reconstructed_tomo = vol_file
+        # Attempt to read real acquisition order from CSV
+        try:
+            acquisition_order = read_acquisition_order_csv(aretomo_dir, tomo_prefix)
+            print(f"Found acquisition order data with {len(acquisition_order)} entries.")
+            exposures = calculate_cumulative_exposure(tilt_angles, acquisition_order, dose_per_tilt)
+        except FileNotFoundError:
+            print("Warning: Acquisition order CSV file not found. Using default incremental exposure.")
+            # Fallback: just do an incremental from 0, 1*dose, 2*dose, ...
+            exposures = [i * dose_per_tilt for i in range(len(tilt_angles))]
+            
+        # Create a tilt series data array
+        tilt_series_data = []
+        
+        # Loop through the tilt angles, in sorted order (the .tlt order)
+        for i, tilt_angle in enumerate(tilt_angles):
+            # pre-exposure from the computed exposures array
+            pre_exposure = exposures[i]
 
+            # Attempt to match a defocus from ctf_data by tilt angle
+            defocus_u = 0.0
+            defocus_v = 0.0
+            astigmatism_angle = 0.0
+            for ctf_entry in ctf_data:
+                if ctf_entry.get('tilt_angle') is not None:
+                    if abs(ctf_entry['tilt_angle'] - tilt_angle) < 0.1:
+                        defocus_u = ctf_entry['defocus_u']
+                        defocus_v = ctf_entry['defocus_v']
+                        astigmatism_angle = ctf_entry['astigmatism_angle']
+                        break
+                else:
+                    # if no tilt_angle field, attempt frame-based
+                    if ctf_entry['frame'] == (i + 1):
+                        defocus_u = ctf_entry['defocus_u']
+                        defocus_v = ctf_entry['defocus_v']
+                        astigmatism_angle = ctf_entry['astigmatism_angle']
+                        break
+
+            astigmatism = abs(defocus_u - defocus_v)
+            defocus_angle = astigmatism_angle
+
+            x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
+            y_tilt = tilt_angle
+
+            # For typical single-tilt geometry, you might scale some factors with cos(tilt)
+            ctf_scalefactor = math.cos(math.radians(tilt_angle))
+            
+            tilt_series_data.append({
+                'index': i,
+                'tilt_angle': tilt_angle,
+                'pre_exposure': pre_exposure,
+                'defocus_u': defocus_u,
+                'defocus_v': defocus_v,
+                'astigmatism': astigmatism,
+                'defocus_angle': defocus_angle,
+                'x_tilt': x_tilt,
+                'y_tilt': y_tilt,
+                'z_rot': z_rot,
+                'x_shift_angst': x_shift_angst,
+                'y_shift_angst': y_shift_angst,
+                'ctf_scalefactor': ctf_scalefactor
+            })
+        
+        return {
+            'prefix': tomo_prefix,
+            'voltage': voltage,
+            'cs': cs,
+            'amp_contrast': amp_contrast,
+            'pixel_size': pixel_size,
+            'hand': hand,
+            'bin_factor': bin_factor,
+            'vol_size_x': vol_size_x,
+            'vol_size_y': vol_size_y,
+            'vol_size_z': vol_size_z,
+            'tilt_axis': tilt_axis,
+            'vol_file': vol_file,
+            'tilt_series_data': tilt_series_data
+        }
+    
+    except Exception as e:
+        print(f"Error processing tomogram {tomo_prefix}: {str(e)}")
+        return None
+
+def create_combined_tomogram_star(tomogram_data_list, output_dir):
+    """
+    Create a combined tomograms.star file for all tomograms.
+    """
     tomogram_star_path = os.path.join(output_dir, 'tomograms.star')
+    
     with open(tomogram_star_path, 'w') as f:
         f.write("# version 50001\n\n")
         f.write("data_global\n\n")
@@ -370,70 +530,45 @@ def create_tomogram_star(session_data, output_dir, tomo_prefix, aretomo_dir, vol
         f.write("_rlnTomoSizeZ #14\n")
         f.write("_rlnTomoReconstructedTomogram #15\n")
 
-        f.write(
-            f"{tomo_prefix}   {voltage:.6f}   {cs:.6f}   {amp_contrast:.6f}   {pixel_size:.6f}   "
-            f"{hand:.6f}   {optics_group}   {pixel_size:.6f}   {tilt_series_star_rel}   "
-            f"{etomo_directive_rel}   {bin_factor:.6f}   {vol_size_x}   {vol_size_y}   {vol_size_z}   "
-            f"{reconstructed_tomo}\n"
-        )
-    print(f"Created tomogram star file: {tomogram_star_path}")
+        for data in tomogram_data_list:
+            if data is None:
+                continue
+                
+            tomo_prefix = data['prefix']
+            optics_group = "optics1"  # Default optics group
+            
+            # Relative paths for star and etomo directive files
+            tilt_series_star_rel = f"{tomo_prefix}.star"
+            etomo_directive_rel = f"{tomo_prefix}.edf"
+
+            f.write(
+                f"{tomo_prefix}   {data['voltage']:.6f}   {data['cs']:.6f}   {data['amp_contrast']:.6f}   "
+                f"{data['pixel_size']:.6f}   {data['hand']:.6f}   {optics_group}   {data['pixel_size']:.6f}   "
+                f"{tilt_series_star_rel}   {etomo_directive_rel}   {data['bin_factor']:.6f}   "
+                f"{data['vol_size_x']}   {data['vol_size_y']}   {data['vol_size_z']}   {data['vol_file']}\n"
+            )
+            
+    print(f"Created combined tomogram star file: {tomogram_star_path}")
     return tomogram_star_path
 
-
-def create_tilt_series_star(
-    session_data,
-    output_dir,
-    tomo_prefix,
-    aretomo_dir,
-    tilt_angles,
-    xf_data,
-    ctf_data,
-    aln_data,
-    dose_per_tilt
-):
+def create_individual_tilt_series_star(tomogram_data, output_dir):
     """
-    Create the tilt-series star file using AreTomo3 metadata, referencing the .mrcs softlinks.
-    Includes the per-tilt cumulative exposure in _rlnMicrographPreExposure.
+    Create an individual tilt-series star file for a single tomogram.
     """
-    os.makedirs(output_dir, exist_ok=True)
-    pixel_size = session_data['parameters']['PixSize']
-
-    # Instead of reading TiltAxis from the session JSON, read the tilt-axis angle (ROT) from the ALN file.
-    aln_data = read_aln_file(aretomo_dir, tomo_prefix)
-    # Assume that the first data row’s second column of the ALN file contains the tilt-axis rotation value.
-    try:
-        tilt_axis = float(aln_data[0][1])
-        print(f"Using tilt-axis angle from ALN file: {tilt_axis:.6f} degrees")
-    except Exception as exc:
-        raise ValueError("Could not read tilt-axis angle (ROT) from the ALN file.") from exc
-
-
+    tomo_prefix = tomogram_data['prefix']
+    pixel_size = tomogram_data['pixel_size']
+    tilt_axis = tomogram_data['tilt_axis']
+    
     abs_output_dir = os.path.abspath(output_dir)
-    even_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
-    odd_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
+    even_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
+    odd_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
     aligned_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
-    ctf_mrcs_file     = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
-
-    # If the CTF entries do not have tilt_angle set, match them by frame index
-    if ctf_data and ctf_data[0].get('tilt_angle') is None:
-        for entry in ctf_data:
-            frame_idx = entry['frame'] - 1
-            if 0 <= frame_idx < len(tilt_angles):
-                entry['tilt_angle'] = tilt_angles[frame_idx]
-
-    # Attempt to read real acquisition order from CSV
-    try:
-        acquisition_order = read_acquisition_order_csv(aretomo_dir, tomo_prefix)
-        print(f"Found acquisition order data with {len(acquisition_order)} entries.")
-        exposures = calculate_cumulative_exposure(tilt_angles, acquisition_order, dose_per_tilt)
-    except FileNotFoundError:
-        print("Warning: Acquisition order CSV file not found. Using default incremental exposure.")
-        # Fallback: just do an incremental from 0, 1*dose, 2*dose, ...
-        exposures = [i * dose_per_tilt for i in range(len(tilt_angles))]
-
+    ctf_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
+    
     tilt_series_star_path = os.path.join(output_dir, f"{tomo_prefix}.star")
+    
     with open(tilt_series_star_path, 'w') as f:
-        f.write("# Generated by AreTomo3 to RELION5 converter\n")
+        f.write("# Generated by AreTomo3 to RELION5-multi converter\n")
         f.write("# Relion star file version 50001\n\n")
         f.write(f"data_{tomo_prefix}\n\n")
 
@@ -467,124 +602,89 @@ def create_tilt_series_star(
         f.write("_rlnTomoXShiftAngst\n")
         f.write("_rlnTomoYShiftAngst\n")
         f.write("_rlnCtfScalefactor\n\n")
-
-        # Loop through the tilt angles, in sorted order (the .tlt order)
-        for i, tilt_angle in enumerate(tilt_angles):
-            # pre-exposure from the computed exposures array
-            pre_exposure = exposures[i]
-
-            # Attempt to match a defocus from ctf_data by tilt angle
-            defocus_u = 0.0
-            defocus_v = 0.0
-            astigmatism_angle = 0.0
-            for ctf_entry in ctf_data:
-                if ctf_entry.get('tilt_angle') is not None:
-                    if abs(ctf_entry['tilt_angle'] - tilt_angle) < 0.1:
-                        defocus_u = ctf_entry['defocus_u']
-                        defocus_v = ctf_entry['defocus_v']
-                        astigmatism_angle = ctf_entry['astigmatism_angle']
-                        break
-                else:
-                    # if no tilt_angle field, attempt frame-based
-                    if ctf_entry['frame'] == (i + 1):
-                        defocus_u = ctf_entry['defocus_u']
-                        defocus_v = ctf_entry['defocus_v']
-                        astigmatism_angle = ctf_entry['astigmatism_angle']
-                        break
-
-            astigmatism = abs(defocus_u - defocus_v)
-            defocus_angle = astigmatism_angle
-
-            x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
-            y_tilt = tilt_angle
-
-            # Format the MicrographName fields
-            even_entry    = f"{(i+1):06d}@{even_mrcs_file}"
-            odd_entry     = f"{(i+1):06d}@{odd_mrcs_file}"
+        
+        # For each tilt image in this tomogram:
+        for entry in tomogram_data['tilt_series_data']:
+            # Extract parameters from the tilt series data structure
+            i = entry['index']
+            tilt_angle = entry['tilt_angle']
+            pre_exposure = entry['pre_exposure']
+            defocus_u = entry['defocus_u']
+            defocus_v = entry['defocus_v']
+            astigmatism = entry['astigmatism']
+            defocus_angle = entry['defocus_angle']
+            x_tilt = entry['x_tilt']
+            y_tilt = entry['y_tilt']
+            z_rot = entry['z_rot']
+            x_shift_angst = entry['x_shift_angst']
+            y_shift_angst = entry['y_shift_angst']
+            ctf_scalefactor = entry['ctf_scalefactor']
+            
+            even_entry = f"{(i+1):06d}@{even_mrcs_file}"
+            odd_entry = f"{(i+1):06d}@{odd_mrcs_file}"
             aligned_entry = f"{i+1}@{aligned_mrcs_file}"
             ctf_entry_str = f"{i+1}@{ctf_mrcs_file}"
-
-            # For typical single-tilt geometry, you might scale some factors with cos(tilt)
-            ctf_scalefactor = math.cos(math.radians(tilt_angle))
-
+            
+            # Write the row
             f.write(
                 f"FileNotFound 1 {tilt_angle:.6f} {tilt_axis:.6f} {pre_exposure:.6f} 0.000000 FileNotFound "
                 f"{even_entry} {odd_entry} {aligned_entry} FileNotFound 0 0 0 {ctf_entry_str} "
                 f"{defocus_u:.6f} {defocus_v:.6f} {astigmatism:.6f} {defocus_angle:.6f} 0 "
                 f"10.000000 0.010000 {x_tilt:.6f} {y_tilt:.6f} {z_rot:.6f} {x_shift_angst:.6f} {y_shift_angst:.6f} {ctf_scalefactor:.6f}\n"
             )
-
-    print(f"Created tilt series star file: {tilt_series_star_path}")
+    
+    print(f"Created individual tilt series star file: {tilt_series_star_path}")
     return tilt_series_star_path
 
-def print_banner():
-    """Print a banner with version information."""
-    print(f"""
-╔══════════════════════════════════════════════════╗
-║     Convert AreTomo3 output to RELION5 format    ║
-╚══════════════════════════════════════════════════╝
-""")
-
 def main():
-    print_banner()
     args = parse_args()
-
-    # Check for required directory
+    
     if not os.path.exists(args.aretomo_dir):
         print(f"Error: AreTomo3 directory not found: {args.aretomo_dir}", file=sys.stderr)
         sys.exit(1)
-
-    try:
-        session_data = read_session_json(args.aretomo_dir)
-        tomo_prefix = get_tomo_prefix(args.aretomo_dir)
-        print(f"Processing tomogram: {tomo_prefix}")
-
-        tilt_angles = read_tlt_file(args.aretomo_dir, tomo_prefix)
-        print(f"Found {len(tilt_angles)} tilt angles")
-
-        xf_data = read_xf_file(args.aretomo_dir, tomo_prefix)
-        print(f"Found {len(xf_data)} transformation matrices")
-
-        ctf_data = read_ctf_file(args.aretomo_dir, tomo_prefix)
-        print(f"Found {len(ctf_data)} CTF entries")
-
-        aln_data = read_aln_file(args.aretomo_dir, tomo_prefix)
-        if aln_data:
-            print(f"Found {len(aln_data)} ALN entries")
-
-        os.makedirs(args.output_dir, exist_ok=True)
-        print("Creating softlinks with .mrcs extension...")
-        links_created, vol_file = create_softlinks(args.aretomo_dir, args.output_dir, tomo_prefix)
-
-        start_time = datetime.now()
-
-        # Create the "tomograms.star"
-        create_tomogram_star(session_data, args.output_dir, tomo_prefix, args.aretomo_dir, vol_file)
-
-        # Create the tilt-series star file
-        create_tilt_series_star(
-            session_data,
-            args.output_dir,
-            tomo_prefix,
-            args.aretomo_dir,
-            tilt_angles,
-            xf_data,
-            ctf_data,
-            aln_data,
-            args.dose
-        )
-
-        end_time = datetime.now()
-        elapsed = (end_time - start_time).total_seconds()
-        print(f"Successfully created RELION5 star files in {args.output_dir}")
-        print(f"Processing completed in {elapsed:.2f} seconds")
-
-    except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Find and filter tomogram prefixes
+    all_prefixes = find_all_tomo_prefixes(args.aretomo_dir)
+    tomo_prefixes = filter_prefixes(all_prefixes, args.include, args.exclude)
+    
+    if not tomo_prefixes:
+        print("No tomogram prefixes found matching the criteria.", file=sys.stderr)
         sys.exit(1)
+    
+    print("Processing tomograms:")
+    for prefix in tomo_prefixes:
+        print(f"  {prefix}")
+    
+    # Process each tomogram folder and collect data into a list
+    tomogram_data_list = []
+    for prefix in tomo_prefixes:
+        # Create softlinks for the current tomogram
+        try:
+            links, _ = create_softlinks(args.aretomo_dir, args.output_dir, prefix)
+        except Exception as e:
+            print(f"Warning: Could not create softlinks for {prefix}: {e}")
+            continue
+        
+        data = collect_tomogram_data(args.aretomo_dir, prefix, args.dose)
+        if data is None:
+            print(f"Skipping tomogram {prefix} due to errors.")
+            continue
+        tomogram_data_list.append(data)
+        
+        # Create an individual tilt-series star file for this tomogram
+        create_individual_tilt_series_star(data, args.output_dir)
+
+        create_dummy_edf_file(args.output_dir, prefix)
+    
+    # Create a combined tomogram.star file (including all tomograms)
+    if tomogram_data_list:
+        create_combined_tomogram_star(tomogram_data_list, args.output_dir)
+    else:
+        print("No valid tomogram data was collected.", file=sys.stderr)
+    
+    print("Processing completed.")
 
 if __name__ == "__main__":
     main()
