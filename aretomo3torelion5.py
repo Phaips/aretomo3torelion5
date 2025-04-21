@@ -101,8 +101,8 @@ def read_xf_file(aretomo_dir, tomo_prefix):
 
 def read_ctf_file(aretomo_dir, tomo_prefix):
     """
-    Read defocus1/defocus2 (in Å) from the AreTomo3 _CTF.txt
-    and convert them to microns, along with the astig angle.
+    Read CTF defocus information from the _CTF.txt produced by AreTomo3 (e.g. Position_1_CTF.txt).
+    Adjust parsing logic as needed if your file differs in format.
     """
     ctf_file = os.path.join(aretomo_dir, f"{tomo_prefix}_CTF.txt")
     if not os.path.exists(ctf_file):
@@ -110,18 +110,17 @@ def read_ctf_file(aretomo_dir, tomo_prefix):
     ctf_data = []
     with open(ctf_file, 'r') as f:
         for line in f:
-            if not line.strip() or line.startswith('#'):
-                continue
-            parts = line.split()
-            # parts[1]=defocus1 [Å], parts[2]=defocus2 [Å], parts[3]=astig-angle
-            defocusU = float(parts[1])  
-            defocusV = float(parts[2])
-            ctf_data.append({
-                'frame':   int(parts[0]),
-                'defocus_u': defocusU,
-                'defocus_v': defocusV,
-                'astigmatism_angle': float(parts[3])
-            })
+            if line.strip() and not line.startswith('#'):
+                parts = line.strip().split()
+                # Expecting something like: frame defU defV astigAngle ...
+                if len(parts) >= 8:
+                    ctf_data.append({
+                        'frame': int(parts[0]),
+                        'tilt_angle': None,  # We'll match with tilt angles if needed
+                        'defocus_u': float(parts[1]),
+                        'defocus_v': float(parts[2]),
+                        'astigmatism_angle': float(parts[3])
+                    })
     return ctf_data
 
 def read_aln_file(aretomo_dir, tomo_prefix):
