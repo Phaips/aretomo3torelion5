@@ -5,7 +5,9 @@ import argparse
 import math
 import numpy as np
 import sys
+import glob
 import re
+from datetime import datetime
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Convert AreTomo3 output to RELION5 star files')
@@ -39,6 +41,14 @@ def find_all_tomo_prefixes(aretomo_dir):
 def filter_prefixes(all_prefixes, include=None, exclude=None):
     """
     Filter tomogram prefixes based on include/exclude lists.
+    
+    Args:
+        all_prefixes: List of all detected tomogram prefixes
+        include: List of prefixes to include (if None, include all)
+        exclude: List of prefixes to exclude (if None, exclude none)
+    
+    Returns:
+        Filtered list of prefixes
     """
     result = list(all_prefixes)
     
@@ -65,71 +75,20 @@ def read_session_json(aretomo_dir, tomo_prefix):
         session_data = json.load(f)
     return session_data
 
-def read_aln_file(aretomo_dir, tomo_prefix):
-    """
-    Read ALL alignment info from the .aln file, including tilt angles and dimensions.
-    The tilt‐axis is now taken from the first entry’s ROT column.
-    """
-    aln_file = os.path.join(aretomo_dir, f"{tomo_prefix}.aln")
-    if not os.path.exists(aln_file):
-        raise FileNotFoundError(f"ALN file not found: {aln_file}")
-
-    dimensions = None
-    aln_data = []
-
-    with open(aln_file, 'r') as f:
-        for raw_line in f:
-            stripped = raw_line.strip()
-
-            # dimensions
-            if "RawSize" in stripped:
-                parts = stripped.split("=")
-                if len(parts) == 2:
-                    dims = parts[1].split()
-                    if len(dims) >= 2:
-                        try:
-                            dimensions = (int(dims[0]), int(dims[1]))
-                        except ValueError:
-                            pass
-
-            # alignment rows: whitespace → digit
-            elif re.match(r'^\s+\d+', raw_line):
-                parts = stripped.split()
-                if len(parts) >= 10:
-                    try:
-                        aln_data.append({
-                            'section':   int(parts[0]),
-                            'rotation':  float(parts[1]),  # ROT
-                            'mag':       float(parts[2]),
-                            'tx':        float(parts[3]),
-                            'ty':        float(parts[4]),
-                            'smean':     float(parts[5]),
-                            'sfit':      float(parts[6]),
-                            'scale':     float(parts[7]),
-                            'base':      float(parts[8]),
-                            'tilt_angle':float(parts[9])
-                        })
-                    except ValueError:
-                        pass
-
-    if not aln_data:
-        raise ValueError(f"No alignment data found in {aln_file}")
-    if dimensions is None:
-        raise ValueError(f"Could not extract dimensions from {aln_file}")
-
-    # derive tilt_axis from first ROT
-    tilt_axis = aln_data[0]['rotation']
-
-    return {
-        'dimensions': dimensions,
-        'tilt_axis':  tilt_axis,
-        'aln_data':   aln_data
-    }
-
-
+def read_tlt_file(aretomo_dir, tomo_prefix):
+    """Read tilt angles from the .tlt file."""
+    tlt_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_st.tlt")
+    if not os.path.exists(tlt_file):
+        raise FileNotFoundError(f"Tilt file not found: {tlt_file}")
+    with open(tlt_file, 'r') as f:
+        return [float(line.strip()) for line in f if line.strip()]
 
 def read_xf_file(aretomo_dir, tomo_prefix):
-    """Read transformation matrices from the .xf file (IMOD format)."""
+    """Read transformation matrices from the .xf file (IMOD format).
+
+    Returns:
+      A list of lists, each with 6 floats: [A11, A12, A21, A22, DX, DY].
+    """
     xf_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Imod", f"{tomo_prefix}_st.xf")
     if not os.path.exists(xf_file):
         raise FileNotFoundError(f"XF file not found: {xf_file}")
@@ -142,40 +101,77 @@ def read_xf_file(aretomo_dir, tomo_prefix):
 
 def read_ctf_file(aretomo_dir, tomo_prefix):
     """
-    Read all CTF data from the _CTF.txt file.
-    This includes defocus1, defocus2, astigmatism angle, and other CTF parameters.
+    Read defocus1/defocus2 (in Å) from the AreTomo3 _CTF.txt
+    and convert them to microns, along with the astig angle.
     """
     ctf_file = os.path.join(aretomo_dir, f"{tomo_prefix}_CTF.txt")
     if not os.path.exists(ctf_file):
         raise FileNotFoundError(f"CTF file not found: {ctf_file}")
-    
     ctf_data = []
     with open(ctf_file, 'r') as f:
         for line in f:
             if not line.strip() or line.startswith('#'):
                 continue
-            
             parts = line.split()
-            if len(parts) >= 8:
-                try:
-                    ctf_entry = {
-                        'frame': int(parts[0]),
-                        'defocus_u': float(parts[1]),  # Already in Angstroms
-                        'defocus_v': float(parts[2]),  # Already in Angstroms
-                        'astigmatism_angle': float(parts[3]),
-                        'phase_shift': float(parts[4]),
-                        'cross_corr': float(parts[5]),
-                        'ctf_fit_range': float(parts[6]),
-                        'dfHand': float(parts[7])
-                    }
-                    ctf_data.append(ctf_entry)
-                except (ValueError, IndexError):
-                    pass
-    
-    if not ctf_data:
-        raise ValueError(f"No CTF data found in CTF file: {ctf_file}")
-    
+            # parts[1]=defocus1 [Å], parts[2]=defocus2 [Å], parts[3]=astig-angle
+            defocusU = float(parts[1])  
+            defocusV = float(parts[2])
+            ctf_data.append({
+                'frame':   int(parts[0]),
+                'defocus_u': defocusU,
+                'defocus_v': defocusV,
+                'astigmatism_angle': float(parts[3])
+            })
     return ctf_data
+
+def read_aln_file(aretomo_dir, tomo_prefix):
+    """Read alignment info from the .aln file if needed."""
+    aln_file = os.path.join(aretomo_dir, f"{tomo_prefix}.aln")
+    if not os.path.exists(aln_file):
+        raise FileNotFoundError(f"ALN file not found: {aln_file}")
+    aln_data = []
+    with open(aln_file, 'r') as f:
+        lines = f.readlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith("# SEC"):
+                for j in range(i+1, len(lines)):
+                    data_line = lines[j].strip()
+                    if data_line and data_line.lstrip()[0].isdigit():
+                        parts = data_line.split()
+                        if len(parts) >= 3:
+                            aln_data.append(parts)
+                break
+    if not aln_data:
+        print("ALN file content preview:")
+        with open(aln_file, 'r') as f2:
+            for i, line in enumerate(f2):
+                if i < 10:
+                    print(f"Line {i+1}: {repr(line)}")
+        raise ValueError("No alignment data found in ALN file.")
+    return aln_data
+
+def read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix):
+    """
+    Read volume dimensions from a line like "# RawSize = 4096 4096" in the .aln file.
+    Returns (vol_x, vol_y, None).
+    """
+    aln_file = os.path.join(aretomo_dir, f"{tomo_prefix}.aln")
+    if not os.path.exists(aln_file):
+        raise FileNotFoundError(f"ALN file not found: {aln_file}")
+    with open(aln_file, 'r') as f:
+        for line in f:
+            if "RawSize" in line:
+                parts = line.strip().split("=")
+                if len(parts) == 2:
+                    dims = parts[1].strip().split()
+                    if len(dims) >= 2:
+                        try:
+                            vol_x = int(dims[0])
+                            vol_y = int(dims[1])
+                            return vol_x, vol_y, None
+                        except ValueError:
+                            raise ValueError(f"Failed to parse dimensions from: {line.strip()}")
+    raise ValueError("Dimensions not found in ALN file.")
 
 def read_volZ_from_json(session_data):
     """Read the Z dimension (VolZ) from AreTomo3 session JSON."""
@@ -183,6 +179,63 @@ def read_volZ_from_json(session_data):
     if vol_z is None:
         raise ValueError("VolZ not found in session metadata.")
     return vol_z
+
+def read_ctf_txt(aretomo_dir, tomo_prefix):
+    """
+    (Optional) read additional CTF info (including 'dfHand') from the same _CTF.txt file,
+    if you need to store e.g. handedness. Adjust logic as needed.
+    """
+    ctf_txt_file = os.path.join(aretomo_dir, f"{tomo_prefix}_CTF.txt")
+    if not os.path.exists(ctf_txt_file):
+        return []
+    ctf_txt_data = []
+    with open(ctf_txt_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 8:
+                entry = {
+                    'micrograph_num': int(parts[0]),
+                    'defocus1': float(parts[1]),
+                    'defocus2': float(parts[2]),
+                    'astig_azimuth': float(parts[3]),
+                    'phase_shift': float(parts[4]),
+                    'cross_corr': float(parts[5]),
+                    'ctf_fit_range': float(parts[6]),
+                    'dfHand': float(parts[7])  # handedness
+                }
+                ctf_txt_data.append(entry)
+    return ctf_txt_data
+
+def compute_tilt_alignment(xf_row, pixel_size):
+    """
+    Compute RELION tilt parameters from an IMOD .xf transformation matrix.
+     Following:
+     https://github.com/scipion-em/scipion-em-reliontomo/blob/8d538ca04f8d02d7a9978e594876bbf7617dcf5f/reliontomo/convert/convert50_tomo.py
+     and
+     https://github.com/teamtomo/yet-another-imod-wrapper/blob/main/src/yet_another_imod_wrapper/utils/xf.py#L52
+
+    """
+    A11, A12, A21, A22, DX, DY = xf_row
+    # Build the full 3x3 transformation matrix
+    T = np.array([[A11, A12, DX],
+                  [A21, A22, DY],
+                  [0.0, 0.0, 1.0]])
+    # Note: np.arctan2(A12, A11) gives the proper sign.
+    z_rot = np.degrees(np.arctan2(A12, A11))
+    
+    # Invert the full transformation matrix to get the corrected translation
+    T_inv = np.linalg.inv(T)
+    # The translation (shift) is given by the third column of the inverted matrix
+    x_shift_angst = T_inv[0, 2] * pixel_size
+    y_shift_angst = T_inv[1, 2] * pixel_size
+
+    x_tilt = 0.0  # by default
+    y_tilt = 0.0  # we populate this later
+    
+    return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
 
 def read_acquisition_order_csv(aretomo_dir, tomo_prefix):
     """
@@ -218,32 +271,19 @@ def read_acquisition_order_csv(aretomo_dir, tomo_prefix):
         raise ValueError(f"No valid data found in acquisition order CSV: {csv_file}")
     return acquisition_data
 
-def compute_tilt_alignment(xf_row, pixel_size):
-    """
-    Compute RELION tilt parameters from an IMOD .xf transformation matrix.
-    """
-    A11, A12, A21, A22, DX, DY = xf_row
-    # Build the full 3x3 transformation matrix
-    T = np.array([[A11, A12, DX],
-                  [A21, A22, DY],
-                  [0.0, 0.0, 1.0]])
-    # Note: np.arctan2(A12, A11) gives the proper sign.
-    z_rot = np.degrees(np.arctan2(A12, A11))
-    
-    # Invert the full transformation matrix to get the corrected translation
-    T_inv = np.linalg.inv(T)
-    # The translation (shift) is given by the third column of the inverted matrix
-    x_shift_angst = T_inv[0, 2] * pixel_size
-    y_shift_angst = T_inv[1, 2] * pixel_size
-
-    x_tilt = 0.0  # by default
-    y_tilt = 0.0  # we populate this later
-    
-    return x_tilt, y_tilt, z_rot, x_shift_angst, y_shift_angst
-
 def calculate_cumulative_exposure(tilt_angles, acquisition_order, dose_per_tilt):
     """
-    Calculate cumulative exposure for each tilt based on the acquisition order.
+    Calculate cumulative exposure for each tilt based on the acquisition order
+    (i.e. the actual order in which images were acquired).
+
+    Args:
+      tilt_angles: Sorted tilt angles from the .tlt file (lowest to highest, typically).
+      acquisition_order: List of (image_num, tilt_angle) from the CSV in acquisition order.
+      dose_per_tilt: The user-provided per-tilt dose (e-/Å²).
+
+    Returns:
+      A list of exposures, matching length/order of tilt_angles.
+      exposures[i] = pre-exposure for tilt_angles[i].
     """
     if dose_per_tilt <= 0:
         return [0.0] * len(tilt_angles)
@@ -254,12 +294,12 @@ def calculate_cumulative_exposure(tilt_angles, acquisition_order, dose_per_tilt)
 
     # For each image in the real acquisition order, assign the current exposure, then increment
     for _, tilt_angle in acquisition_order:
-        # Round tilt_angle to 2 decimals to match precision
+        # Round tilt_angle to 2 decimals to match .tlt rounding
         rangle = round(tilt_angle, 2)
         angle_to_exposure[rangle] = current_exposure
         current_exposure += dose_per_tilt
 
-    # Now we build a final array, in the same order as tilt_angles
+    # Now we build a final array, in the sorted order of tilt_angles (as read from .tlt)
     exposures = []
     for angle in tilt_angles:
         rangle = round(angle, 2)
@@ -336,42 +376,53 @@ def create_dummy_edf_file(output_dir, tomo_prefix):
 def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
     """Process a single tomogram and return its data"""
     try:
-        # Read session data from JSON
         session_data = read_session_json(aretomo_dir, tomo_prefix)
         
-        # Read ALN file - this gives us tilt angles, dimensions, and tilt axis in one go
-        aln_info = read_aln_file(aretomo_dir, tomo_prefix)
-        vol_size_x, vol_size_y = aln_info['dimensions']
-        tilt_axis = aln_info['tilt_axis']
-        
-        # Extract tilt angles from ALN data
-        tilt_angles = [entry['tilt_angle'] for entry in aln_info['aln_data']]
-        print(f"Found {len(tilt_angles)} tilt angles from ALN file")
-        
-        # Read XF data for transformation matrices
+        tilt_angles = read_tlt_file(aretomo_dir, tomo_prefix)
+        print(f"Found {len(tilt_angles)} tilt angles")
+
         xf_data = read_xf_file(aretomo_dir, tomo_prefix)
         print(f"Found {len(xf_data)} transformation matrices")
-        
-        # Read CTF data directly from CTF.txt
+
         ctf_data = read_ctf_file(aretomo_dir, tomo_prefix)
         print(f"Found {len(ctf_data)} CTF entries")
-        
-        # Get hand value from first CTF entry
-        hand = ctf_data[0]['dfHand'] if ctf_data else 0.0
+
+        aln_data = read_aln_file(aretomo_dir, tomo_prefix)
+        if aln_data:
+            print(f"Found {len(aln_data)} ALN entries")
             
-        # Get Z dimension from the session JSON
+        # Read CTF text for handedness
+        ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
+        hand = ctf_txt_data[0]['dfHand'] if ctf_txt_data else 0.0
+            
+        # Read dimensions
+        vol_size_x, vol_size_y, _ = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
         vol_size_z = read_volZ_from_json(session_data)
         
-        # Get voltage, pixel size, etc. from session JSON
+        # Get voltage, pixel size, etc.
         voltage = session_data['parameters']['kV']
         cs = session_data['parameters']['Cs']
         amp_contrast = session_data['parameters']['AmpContrast']
         pixel_size = session_data['parameters']['PixSize']
         bin_factor = session_data['parameters'].get('AtBin', [1])[0]
         
+        # Get tilt axis from ALN file
+        try:
+            tilt_axis = float(aln_data[0][1])
+        except Exception:
+            tilt_axis = 0.0  # Default if not found
+        
         # Assume vol file path
         vol_file = os.path.join(aretomo_dir, f"{tomo_prefix}_Vol.mrc")
         
+        # Handle tilt series data
+        # If the CTF entries do not have tilt_angle set, match them by frame index
+        if ctf_data and ctf_data[0].get('tilt_angle') is None:
+            for entry in ctf_data:
+                frame_idx = entry['frame'] - 1
+                if 0 <= frame_idx < len(tilt_angles):
+                    entry['tilt_angle'] = tilt_angles[frame_idx]
+
         # Attempt to read real acquisition order from CSV
         try:
             acquisition_order = read_acquisition_order_csv(aretomo_dir, tomo_prefix)
@@ -385,34 +436,37 @@ def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
         # Create a tilt series data array
         tilt_series_data = []
         
-        # Loop through the tilt angles
+        # Loop through the tilt angles, in sorted order (the .tlt order)
         for i, tilt_angle in enumerate(tilt_angles):
             # pre-exposure from the computed exposures array
             pre_exposure = exposures[i]
 
-            # Get defocus values directly from CTF data by frame number
+            # Attempt to match a defocus from ctf_data by tilt angle
             defocus_u = 0.0
             defocus_v = 0.0
             astigmatism_angle = 0.0
             for ctf_entry in ctf_data:
-                if ctf_entry['frame'] == (i + 1):
-                    defocus_u = ctf_entry['defocus_u']
-                    defocus_v = ctf_entry['defocus_v']
-                    astigmatism_angle = ctf_entry['astigmatism_angle']
-                    break
+                if ctf_entry.get('tilt_angle') is not None:
+                    if abs(ctf_entry['tilt_angle'] - tilt_angle) < 0.1:
+                        defocus_u = ctf_entry['defocus_u']
+                        defocus_v = ctf_entry['defocus_v']
+                        astigmatism_angle = ctf_entry['astigmatism_angle']
+                        break
+                else:
+                    # if no tilt_angle field, attempt frame-based
+                    if ctf_entry['frame'] == (i + 1):
+                        defocus_u = ctf_entry['defocus_u']
+                        defocus_v = ctf_entry['defocus_v']
+                        astigmatism_angle = ctf_entry['astigmatism_angle']
+                        break
 
             astigmatism = abs(defocus_u - defocus_v)
             defocus_angle = astigmatism_angle
 
-            # Compute tilt alignment parameters from XF data
-            if i < len(xf_data):
-                x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
-            else:
-                x_tilt, z_rot, x_shift_angst, y_shift_angst = 0.0, 0.0, 0.0, 0.0
-                
+            x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
             y_tilt = tilt_angle
 
-            # For typical single-tilt geometry, scale factors with cos(tilt)
+            # For typical single-tilt geometry, you might scale some factors with cos(tilt)
             ctf_scalefactor = math.cos(math.radians(tilt_angle))
             
             tilt_series_data.append({
@@ -515,7 +569,7 @@ def create_individual_tilt_series_star(tomogram_data, output_dir):
     tilt_series_star_path = os.path.join(output_dir, f"{tomo_prefix}.star")
     
     with open(tilt_series_star_path, 'w') as f:
-        f.write("# Generated by AreTomo3 to RELION5 converter\n")
+        f.write("# Generated by AreTomo3 to RELION5-multi converter\n")
         f.write("# Relion star file version 50001\n\n")
         f.write(f"data_{tomo_prefix}\n\n")
 
@@ -576,7 +630,7 @@ def create_individual_tilt_series_star(tomogram_data, output_dir):
             f.write(
                 f"FileNotFound 1 {tilt_angle:.6f} {tilt_axis:.6f} {pre_exposure:.6f} 0.000000 FileNotFound "
                 f"{even_entry} {odd_entry} {aligned_entry} FileNotFound 0 0 0 {ctf_entry_str} "
-                f"{defocus_u:.6f} {defocus_v:.6f} {astigmatism:.6f} {defocus_angle} 0 "
+                f"{defocus_u:.6f} {defocus_v:.6f} {astigmatism:.6f} {defocus_angle:.6f} 0 "
                 f"10.000000 0.010000 {x_tilt:.6f} {y_tilt:.6f} {z_rot:.6f} {x_shift_angst:.6f} {y_shift_angst:.6f} {ctf_scalefactor:.6f}\n"
             )
     
