@@ -1,6 +1,6 @@
 # AreTomo3 to RELION5
 
-A Python utility for converting AreTomo3 alignment and reconstruction output to RELION5 star files.
+A Python utility for converting [AreTomo3](https://github.com/czimaginginstitute/AreTomo3) alignment and reconstruction output to [RELION5](https://github.com/3dem/relion/tree/ver5.0) star files.
 
 ## Features
 
