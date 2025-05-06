@@ -559,11 +559,11 @@ def create_individual_tilt_series_star(tomogram_data, output_dir):
     pixel_size = tomogram_data['pixel_size']
     tilt_axis = tomogram_data['tilt_axis']
     
-    abs_output_dir = os.path.abspath(output_dir)
-    even_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
-    odd_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
-    aligned_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
-    ctf_mrcs_file = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
+    abs_output_dir   = os.path.abspath(output_dir)
+    even_mrcs_file   = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
+    odd_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
+    aligned_mrcs_file= os.path.join(abs_output_dir, f"{tomo_prefix}.mrcs")
+    ctf_mrcs_file    = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
     
     tilt_series_star_path = os.path.join(output_dir, f"{tomo_prefix}.star")
     
@@ -605,23 +605,29 @@ def create_individual_tilt_series_star(tomogram_data, output_dir):
         
         # For each tilt image in this tomogram:
         for entry in tomogram_data['tilt_series_data']:
+            # skip any pure-identity transforms (no rotation AND no shift) -> excluded tilts
+            if abs(entry['z_rot']) < 1e-6 \
+            and abs(entry['x_shift_angst']) < 1e-6 \
+            and abs(entry['y_shift_angst']) < 1e-6:
+                continue
+
             # Extract parameters from the tilt series data structure
-            i = entry['index']
-            tilt_angle = entry['tilt_angle']
-            pre_exposure = entry['pre_exposure']
-            defocus_u = entry['defocus_u']
-            defocus_v = entry['defocus_v']
-            astigmatism = entry['astigmatism']
-            defocus_angle = entry['defocus_angle']
-            x_tilt = entry['x_tilt']
-            y_tilt = entry['y_tilt']
-            z_rot = entry['z_rot']
-            x_shift_angst = entry['x_shift_angst']
-            y_shift_angst = entry['y_shift_angst']
-            ctf_scalefactor = entry['ctf_scalefactor']
+            i                = entry['index']
+            tilt_angle       = entry['tilt_angle']
+            pre_exposure     = entry['pre_exposure']
+            defocus_u        = entry['defocus_u']
+            defocus_v        = entry['defocus_v']
+            astigmatism      = entry['astigmatism']
+            defocus_angle    = entry['defocus_angle']
+            x_tilt           = entry['x_tilt']
+            y_tilt           = entry['y_tilt']
+            z_rot            = entry['z_rot']
+            x_shift_angst    = entry['x_shift_angst']
+            y_shift_angst    = entry['y_shift_angst']
+            ctf_scalefactor  = entry['ctf_scalefactor']
             
-            even_entry = f"{(i+1):06d}@{even_mrcs_file}"
-            odd_entry = f"{(i+1):06d}@{odd_mrcs_file}"
+            even_entry    = f"{(i+1):06d}@{even_mrcs_file}"
+            odd_entry     = f"{(i+1):06d}@{odd_mrcs_file}"
             aligned_entry = f"{i+1}@{aligned_mrcs_file}"
             ctf_entry_str = f"{i+1}@{ctf_mrcs_file}"
             
