@@ -605,7 +605,7 @@ def create_individual_tilt_series_star(tomogram_data, output_dir):
         
         # For each tilt image in this tomogram:
         for entry in tomogram_data['tilt_series_data']:
-            # skip any pure-identity transforms (no rotation AND no shift) -> excluded tilts
+            # skip any pure-identity transforms (no rotation AND no shift) from .xf -> excluded tilts!!
             if abs(entry['z_rot']) < 1e-6 \
             and abs(entry['x_shift_angst']) < 1e-6 \
             and abs(entry['y_shift_angst']) < 1e-6:
