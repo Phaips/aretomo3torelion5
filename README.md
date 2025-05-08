@@ -24,6 +24,30 @@ A Python utility for converting [AreTomo3](https://github.com/czimaginginstitute
 - `--include`: (Optional) One or more tomogram prefixes to include (e.g., `Position_1` `Position_2`). If not provided, all detected prefixes are processed.
 - `--exclude`: (Optional) One or more tomogram prefixes to exclude (e.g., `Position_3` `Position_4`).
 
+Assuming your AreTomo3 output folder should like like:
+
+```
+aretomo3/
+├─ AreTomo3_Session.json
+├─ TiltSeries_Metrics.csv
+├─ TiltSeries_TimeStamp.csv
+├─ Position_1.aln
+├─ Position_1.mrc
+├─ Position_1_ODD.mrc
+├─ Position_1_EVN.mrc
+├─ Position_1_Vol.mrc
+├─ Position_1_CTF.txt
+├─ Position_1_TLT.txt
+├─ Position_1_CTF_Imod.txt
+├─ Position_1_Imod/
+│   ├─ Position_1_st.tlt
+│   ├─ Position_1_st.xf
+│   └─ Position_1_order_list.csv
+├─ Position_2.aln
+├─ Position_2.mrc
+...
+```
+
 ## License
 
 [MIT](LICENSE)
