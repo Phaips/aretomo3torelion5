@@ -24,7 +24,7 @@ A Python utility for converting [AreTomo3](https://github.com/czimaginginstitute
 - `--include`: (Optional) One or more tomogram prefixes to include (e.g., `Position_1` `Position_2`). If not provided, all detected prefixes are processed.
 - `--exclude`: (Optional) One or more tomogram prefixes to exclude (e.g., `Position_3` `Position_4`).
 
-Assuming your AreTomo3 output folder should like like:
+Assuming your AreTomo3 output folder should like this:
 
 ```
 aretomo3/
