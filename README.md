@@ -15,6 +15,8 @@ A Python utility for converting [AreTomo3](https://github.com/czimaginginstitute
 ```bash
  aretomo3torelion5.py /path/to/aretomo_output/ --dose 2 # --output_dir relion_star_files --include Position_1 Position_2 or e.g. --exclude Position_3 Position_4
 ```
+By default the `--output_dir` is called relion_star_files. **The RELION5 project needs to be initialized in this folder.** 
+
 
 ### Arguments
 
