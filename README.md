@@ -26,7 +26,7 @@ By default the `--output_dir` is called relion_star_files. The RELION5 project n
 - `--include`: (Optional) One or more tomogram prefixes to include (e.g., `Position_1` `Position_2`). If not provided, all detected prefixes are processed.
 - `--exclude`: (Optional) One or more tomogram prefixes to exclude (e.g., `Position_3` `Position_4`).
 
-Assuming your AreTomo3 output folder should like this:
+Assuming your AreTomo3 output folder should look like this:
 
 ```
 aretomo3/
