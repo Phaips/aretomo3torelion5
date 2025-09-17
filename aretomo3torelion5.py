@@ -403,6 +403,12 @@ def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
         cs = session_data['parameters']['Cs']
         amp_contrast = session_data['parameters']['AmpContrast']
         pixel_size = session_data['parameters']['PixSize']
+
+        # Read McBin and compute effective pixel size for K3/superres data
+        mcbin = session_data['parameters']['McBin']
+        effective_pixel_size = float(pixel_size) * mcbin
+        print(f"[{tomo_prefix}] Using pixel size: PixSize ({float(pixel_size):.6f} Å/px) * McBin ({mcbin:g}) = {effective_pixel_size:.6f} Å/px")
+
         bin_factor = session_data['parameters'].get('AtBin', [1])[0]
         
         # Get tilt axis from ALN file
@@ -462,7 +468,8 @@ def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
             astigmatism = abs(defocus_u - defocus_v)
             defocus_angle = astigmatism_angle
 
-            x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], pixel_size)
+            # Use the EFFECTIVE pixel size (PixSize * McBin) for shifts
+            x_tilt, _, z_rot, x_shift_angst, y_shift_angst = compute_tilt_alignment(xf_data[i], effective_pixel_size)
             y_tilt = tilt_angle
 
             # For typical single-tilt geometry, you might scale some factors with cos(tilt)
@@ -489,7 +496,7 @@ def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
             'voltage': voltage,
             'cs': cs,
             'amp_contrast': amp_contrast,
-            'pixel_size': pixel_size,
+            'pixel_size': effective_pixel_size,
             'hand': hand,
             'bin_factor': bin_factor,
             'vol_size_x': vol_size_x,
