@@ -392,7 +392,7 @@ def collect_tomogram_data(aretomo_dir, tomo_prefix, dose_per_tilt):
             
         # Read CTF text for handedness
         ctf_txt_data = read_ctf_txt(aretomo_dir, tomo_prefix)
-        hand = ctf_txt_data[0]['dfHand'] if ctf_txt_data else 0.0
+        hand = (-ctf_txt_data[0]['dfHand']) if ctf_txt_data else 0.0 # TO OUR KNOWLEDGE dfHand 1 corresponds to RELION5 invert defocus hand (YES) aka -1
             
         # Read dimensions
         vol_size_x, vol_size_y, _ = read_dimensions_from_aln_strict(aretomo_dir, tomo_prefix)
