@@ -686,7 +686,7 @@ def main():
         if data is None:
             print(f"Skipping tomogram {prefix} due to errors.")
             continue
-        data['vol_file'] = vol_link
+        data['vol_file'] = os.path.join(args.output_dir, f"{prefix}_Vol.mrc")
         tomogram_data_list.append(data)
         
         # Create an individual tilt-series star file for this tomogram
