@@ -338,13 +338,15 @@ def create_softlinks(aretomo_dir, output_dir, tomo_prefix):
     evn_link = os.path.join(abs_output_dir, f"{tomo_prefix}_EVN.mrcs")
     odd_link = os.path.join(abs_output_dir, f"{tomo_prefix}_ODD.mrcs")
     ctf_link = os.path.join(abs_output_dir, f"{tomo_prefix}_CTF.mrcs")
+    vol_link = os.path.join(abs_output_dir, f"{tomo_prefix}_Vol.mrc")
 
     links_created = []
     for src, dst in [
         (mrc_file, mrc_link),
         (evn_file, evn_link),
         (odd_file, odd_link),
-        (ctf_file, ctf_link)
+        (ctf_file, ctf_link),
+        (vol_file, vol_link)
     ]:
         if os.path.exists(src):
             if os.path.exists(dst):
@@ -355,7 +357,7 @@ def create_softlinks(aretomo_dir, output_dir, tomo_prefix):
         else:
             print(f"Warning: Source file not found: {src}")
 
-    return links_created, vol_file
+    return links_created, vol_link
 
 def create_dummy_edf_file(output_dir, tomo_prefix):
     """
@@ -675,7 +677,7 @@ def main():
     for prefix in tomo_prefixes:
         # Create softlinks for the current tomogram
         try:
-            links, _ = create_softlinks(args.aretomo_dir, args.output_dir, prefix)
+            links, vol_link = create_softlinks(args.aretomo_dir, args.output_dir, prefix)
         except Exception as e:
             print(f"Warning: Could not create softlinks for {prefix}: {e}")
             continue
@@ -684,6 +686,7 @@ def main():
         if data is None:
             print(f"Skipping tomogram {prefix} due to errors.")
             continue
+        data['vol_file'] = vol_link
         tomogram_data_list.append(data)
         
         # Create an individual tilt-series star file for this tomogram
